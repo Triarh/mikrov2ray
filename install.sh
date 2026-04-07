@@ -24,7 +24,9 @@ fi
 mkdir -p "$INSTALL_DIR/data"
 
 # Copy docker-compose
-cp "$SCRIPT_DIR/docker-compose.yml" "$INSTALL_DIR/"
+if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
+  cp "$SCRIPT_DIR/docker-compose.yml" "$INSTALL_DIR/"
+fi
 
 # Create .env if not exists
 if [ ! -f "$INSTALL_DIR/.env" ]; then
