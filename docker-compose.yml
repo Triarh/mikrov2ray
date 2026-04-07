@@ -1,11 +1,13 @@
 services:
-  xray:
-    image: teddysun/xray:latest
-    container_name: xray
+  mihomo:
+    image: metacubex/mihomo:latest
+    container_name: mihomo
     restart: unless-stopped
     network_mode: host
+    cap_add:
+      - NET_ADMIN
     volumes:
-      - ./data/xray-config.json:/etc/xray/config.json:ro
+      - ./data/mihomo-config.yaml:/root/.config/mihomo/config.yaml:ro
 
   mikrov2ray:
     image: triarh1/mikrov2ray:latest
@@ -18,4 +20,4 @@ services:
       - ./data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      - xray
+      - mihomo

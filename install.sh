@@ -34,8 +34,9 @@ LISTEN=:8080
 DB_PATH=./data/mikrov2ray.db
 SESSION_SECRET=$SESSION_SECRET
 
-V2RAY_CONTAINER=xray
-V2RAY_CONFIG_PATH=./data/xray-config.json
+MIHOMO_CONTAINER=mihomo
+MIHOMO_CONFIG_PATH=./data/mihomo-config.yaml
+MIHOMO_API=127.0.0.1:9090
 
 MIKROTIK_ADDRESS=192.168.88.1:8728
 MIKROTIK_USERNAME=admin
@@ -46,9 +47,19 @@ else
   echo ".env already exists, skipping"
 fi
 
-# Create empty xray config if not exists
-if [ ! -f "$INSTALL_DIR/data/xray-config.json" ]; then
-  echo '{}' > "$INSTALL_DIR/data/xray-config.json"
+# Create empty mihomo config if not exists
+if [ ! -f "$INSTALL_DIR/data/mihomo-config.yaml" ]; then
+  cat > "$INSTALL_DIR/data/mihomo-config.yaml" <<'YAML'
+mixed-port: 1080
+tproxy-port: 12345
+allow-lan: true
+mode: rule
+log-level: warning
+external-controller: 0.0.0.0:9090
+rules:
+  - MATCH,DIRECT
+YAML
+  echo "Created default mihomo config (configure via web panel)"
 fi
 
 # Pull and start containers
@@ -63,28 +74,32 @@ sysctl -w net.ipv4.ip_forward=1
 echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-mikrov2ray.conf
 
 # Clean up old iptables rules if exist
+iptables -t mangle -D PREROUTING -j MIHOMO 2>/dev/null || true
+iptables -t mangle -F MIHOMO 2>/dev/null || true
+iptables -t mangle -X MIHOMO 2>/dev/null || true
+# Also clean up legacy XRAY chain if upgrading
 iptables -t mangle -D PREROUTING -j XRAY 2>/dev/null || true
 iptables -t mangle -F XRAY 2>/dev/null || true
 iptables -t mangle -X XRAY 2>/dev/null || true
 
-# Create XRAY chain
-iptables -t mangle -N XRAY
+# Create MIHOMO chain
+iptables -t mangle -N MIHOMO
 
 # Skip local/private traffic
-iptables -t mangle -A XRAY -d 127.0.0.0/8 -j RETURN
-iptables -t mangle -A XRAY -d 10.0.0.0/8 -j RETURN
-iptables -t mangle -A XRAY -d 172.16.0.0/12 -j RETURN
-iptables -t mangle -A XRAY -d 192.168.0.0/16 -j RETURN
+iptables -t mangle -A MIHOMO -d 127.0.0.0/8 -j RETURN
+iptables -t mangle -A MIHOMO -d 10.0.0.0/8 -j RETURN
+iptables -t mangle -A MIHOMO -d 172.16.0.0/12 -j RETURN
+iptables -t mangle -A MIHOMO -d 192.168.0.0/16 -j RETURN
 
-# Skip Xray's own outbound traffic (mark 255)
-iptables -t mangle -A XRAY -m mark --mark 255 -j RETURN
+# Skip mihomo's own outbound traffic (routing-mark 255)
+iptables -t mangle -A MIHOMO -m mark --mark 255 -j RETURN
 
-# TPROXY all TCP/UDP to Xray port 12345
-iptables -t mangle -A XRAY -p tcp -j TPROXY --on-port 12345 --tproxy-mark 1
-iptables -t mangle -A XRAY -p udp -j TPROXY --on-port 12345 --tproxy-mark 1
+# TPROXY all TCP/UDP to mihomo port 12345
+iptables -t mangle -A MIHOMO -p tcp -j TPROXY --on-port 12345 --tproxy-mark 1
+iptables -t mangle -A MIHOMO -p udp -j TPROXY --on-port 12345 --tproxy-mark 1
 
 # Apply to forwarded traffic (from MikroTik)
-iptables -t mangle -A PREROUTING -j XRAY
+iptables -t mangle -A PREROUTING -j MIHOMO
 
 # Policy routing for tproxy
 ip rule del fwmark 1 table 100 2>/dev/null || true
@@ -97,18 +112,18 @@ cat > "$TPROXY_SCRIPT" <<'TEOF'
 #!/bin/bash
 set -e
 sysctl -w net.ipv4.ip_forward=1
-iptables -t mangle -D PREROUTING -j XRAY 2>/dev/null || true
-iptables -t mangle -F XRAY 2>/dev/null || true
-iptables -t mangle -X XRAY 2>/dev/null || true
-iptables -t mangle -N XRAY
-iptables -t mangle -A XRAY -d 127.0.0.0/8 -j RETURN
-iptables -t mangle -A XRAY -d 10.0.0.0/8 -j RETURN
-iptables -t mangle -A XRAY -d 172.16.0.0/12 -j RETURN
-iptables -t mangle -A XRAY -d 192.168.0.0/16 -j RETURN
-iptables -t mangle -A XRAY -m mark --mark 255 -j RETURN
-iptables -t mangle -A XRAY -p tcp -j TPROXY --on-port 12345 --tproxy-mark 1
-iptables -t mangle -A XRAY -p udp -j TPROXY --on-port 12345 --tproxy-mark 1
-iptables -t mangle -A PREROUTING -j XRAY
+iptables -t mangle -D PREROUTING -j MIHOMO 2>/dev/null || true
+iptables -t mangle -F MIHOMO 2>/dev/null || true
+iptables -t mangle -X MIHOMO 2>/dev/null || true
+iptables -t mangle -N MIHOMO
+iptables -t mangle -A MIHOMO -d 127.0.0.0/8 -j RETURN
+iptables -t mangle -A MIHOMO -d 10.0.0.0/8 -j RETURN
+iptables -t mangle -A MIHOMO -d 172.16.0.0/12 -j RETURN
+iptables -t mangle -A MIHOMO -d 192.168.0.0/16 -j RETURN
+iptables -t mangle -A MIHOMO -m mark --mark 255 -j RETURN
+iptables -t mangle -A MIHOMO -p tcp -j TPROXY --on-port 12345 --tproxy-mark 1
+iptables -t mangle -A MIHOMO -p udp -j TPROXY --on-port 12345 --tproxy-mark 1
+iptables -t mangle -A PREROUTING -j MIHOMO
 ip rule del fwmark 1 table 100 2>/dev/null || true
 ip rule add fwmark 1 table 100
 ip route replace local default dev lo table 100
@@ -139,11 +154,6 @@ echo "  Login:      admin / admin (change after first login)"
 echo ""
 echo "  Next steps:"
 echo "  1. Open web panel, import VLESS URI or fill settings, click Apply & Restart"
-echo "  2. Add domains/IPs to routes, click Sync to MikroTik"
-echo "  3. On MikroTik (RouterOS 7) run:"
-echo "     /routing table add name=to-proxy fib"
-echo "     /ip firewall mangle add chain=prerouting dst-address-list=vpn-routes \\"
-echo "         action=mark-routing new-routing-mark=to-proxy passthrough=no"
-echo "     /ip route add dst-address=0.0.0.0/0 gateway=$(hostname -I | awk '{print $1}') \\"
-echo "         routing-table=to-proxy"
+echo "  2. Add domains on the Domains tab (auto-synced to MikroTik DNS static)"
+echo "  3. On MikroTik tab, click 'Setup Routing' with this host's IP as gateway"
 echo ""
